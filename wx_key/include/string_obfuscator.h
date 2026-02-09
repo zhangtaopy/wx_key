@@ -55,6 +55,10 @@
         inline std::string GetNtdllName() {
             return OBFUSCATE_STR("ntdll.dll");
         }
+
+        inline std::string GetSignature() {
+            return OBFUSCATE_STR("com.Tencent.WCDB.Config.Cipher");
+        }
     }
 
     #endif // STRING_OBFUSCATOR_H

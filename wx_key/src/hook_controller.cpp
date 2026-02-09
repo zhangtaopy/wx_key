@@ -11,6 +11,7 @@
 #include "../include/hook_controller.h"
 #include "../include/syscalls.h"
 #include "../include/remote_scanner.h"
+#include "../include/remote_scanner_common.h"
 #include "../include/ipc_manager.h"
 #include "../include/remote_hooker.h"
 #include "../include/shellcode_builder.h"
@@ -65,7 +66,6 @@ namespace {
 
     HookContext g_ctx;
     std::string g_lastError;
-    const char* kSupportedRange = "4.0.x 及以上 4.x 版本";
 
     std::string WideToUtf8(const std::wstring& wide) {
         if (wide.empty()) {
@@ -255,65 +255,26 @@ namespace {
             return false;
         }
 
-        // 3. 获取微信版本
-        SendStatus("正在检测微信版本...", 0);
-        RemoteScanner scanner(g_ctx.hProcess);
-        std::string wechatVersion = scanner.GetWeChatVersion();
-        if (wechatVersion.empty()) {
-            SetLastError("获取微信版本失败，目标进程可能已退出");
-            CleanupContext();
-            return false;
-        }
-
-        {
-            std::stringstream versionMsg;
-            versionMsg << u8"检测到的微信版本: " << wechatVersion;
-            SendStatus(versionMsg.str(), 0);
-        }
-
-        // 4. 获取版本配置
-        const WeChatVersionConfig* config = VersionConfigManager::GetConfigForVersion(wechatVersion);
-        if (!config) {
-            std::string errorMsg = std::string(u8"不支持的微信版本: ") + wechatVersion + "，支持范围: " + kSupportedRange;
-            SetLastError(errorMsg);
-            CleanupContext();
-            return false;
-        }
-
-        // 5. 扫描函数
-        SendStatus("正在扫描目标函数...", 0);
-        std::string weixinDll = ObfuscatedStrings::GetWeixinDllName();
-        RemoteModuleInfo moduleInfo;
-
-        if (!scanner.GetRemoteModuleInfo(weixinDll, moduleInfo)) {
-            SetLastError("未找到Weixin.dll模块");
-            CleanupContext();
-            return false;
-        }
-
-        std::vector<uintptr_t> results = scanner.FindAllPatterns(
-            moduleInfo,
-            config->pattern.data(),
-            config->mask.c_str()
-        );
-
-        if (results.size() != 1) {
-            std::stringstream errorMsg;
-            errorMsg << u8"模式匹配失败，找到 " << results.size() << u8" 个结果";
-            SetLastError(errorMsg.str());
-            CleanupContext();
-            return false;
-        }
-
-        uintptr_t targetFunctionAddress = results[0] + config->offset;
-
-        {
+        // 3. 查找目标hook地址
+        RemoteScannerCommon common_scanner;
+        ScanResult result;
+        if (!common_scanner.SearchForHookAddress(g_ctx.hProcess, result)) {
+            SetLastError(result.msg);
+            //降级处理,使用原特征搜索逻辑
+            RemoteScanner scanner;
+            result.reset();
+            if (!scanner.SearchForHookAddress(g_ctx.hProcess, result)) {
+                SetLastError(result.msg);
+                return false;
+            }
+        } 
+        else {
             std::stringstream addrMsg;
-            addrMsg << u8"目标函数地址: 0x" << std::hex << targetFunctionAddress;
+            addrMsg << u8"目标函数地址: 0x" << std::hex << result.target;
             SendStatus(addrMsg.str(), 0);
         }
 
-        // 6. 在目标进程中分配数据缓冲区（用于存放密钥）
+        // 4. 在目标进程中分配数据缓冲区（用于存放密钥）
         SendStatus("正在分配远程数据缓冲区...", 0);
         if (!g_ctx.remoteData.allocate(g_ctx.hProcess, sizeof(SharedKeyData), PAGE_READWRITE)) {
             SetLastError("分配远程数据缓冲区失败");
@@ -321,7 +282,7 @@ namespace {
             return false;
         }
 
-        // 6.1 分配伪栈
+        // 4.1 分配伪栈
         SendStatus("正在分配远程伪栈...", 0);
         const SIZE_T spoofStackSize = 0x8000; // 32KB 伪栈
         if (!g_ctx.spoofStack.allocate(g_ctx.hProcess, spoofStackSize, PAGE_READWRITE)) {
@@ -331,7 +292,7 @@ namespace {
         }
         uintptr_t spoofStackTop = reinterpret_cast<uintptr_t>(g_ctx.spoofStack.get()) + spoofStackSize - 0x20; // 留出对齐空间
 
-        // 7. 初始化IPC
+        // 5. 初始化IPC
         SendStatus("正在初始化IPC通信...", 0);
         std::string uniqueId = GenerateUniqueId(targetPid);
         g_ctx.ipc = std::make_unique<IPCManager>();
@@ -351,12 +312,12 @@ namespace {
             return false;
         }
 
-        // 8. 创建hook
+        // 6. 创建hook
         SendStatus("正在准备安装Hook...", 0);
         g_ctx.hooker = std::make_unique<RemoteHooker>(g_ctx.hProcess);
         g_ctx.hooker->EnableHardwareBreakpointMode(false); // ！！暂时不用硬件断点+VEH，测试期间先用稳定的Inline Hook！！
 
-        // 9. 配置Shellcode
+        // 7. 配置Shellcode
         ShellcodeConfig shellcodeConfig{};
         shellcodeConfig.sharedMemoryAddress = g_ctx.remoteData.get(); // 使用远程分配的地址
         shellcodeConfig.eventHandle = nullptr; // 不再使用事件，改用轮询
@@ -364,9 +325,9 @@ namespace {
         shellcodeConfig.enableStackSpoofing = true; // 强制开启堆栈伪造
         shellcodeConfig.spoofStackPointer = spoofStackTop;
 
-        // 10. 安装hook
+        // 8. 安装hook
         SendStatus("正在安装远程Hook...", 0);
-        if (!g_ctx.hooker->InstallHook(targetFunctionAddress, shellcodeConfig)) {
+        if (!g_ctx.hooker->InstallHook(result.target, shellcodeConfig)) {
             DWORD hookError = GetLastError();
             SetLastError(FormatWin32Error("安装Hook失败", hookError));
             CleanupContext();

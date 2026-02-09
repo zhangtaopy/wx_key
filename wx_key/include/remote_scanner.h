@@ -4,32 +4,26 @@
 #include <Windows.h>
 #include <vector>
 #include <string>
+#include "remote_scanner_base.h"
 
-// 远程进程信息
-struct RemoteModuleInfo {
-    HMODULE baseAddress;
-    SIZE_T imageSize;
-    std::string moduleName;
-};
 
 // 远程特征码扫描器
-class RemoteScanner {
+class RemoteScanner 
+    : public IRemoteScannerBase {
 public:
-    RemoteScanner(HANDLE hProcess);
+    RemoteScanner();
     ~RemoteScanner();
-    
-    // 获取远程进程的模块信息
-    bool GetRemoteModuleInfo(const std::string& moduleName, RemoteModuleInfo& outInfo);
-    
+ 
+public:
+    virtual bool SearchForHookAddress(HANDLE hProcess, ScanResult& result) override;
+
+protected:
     // 在远程进程中查找特征码（单个结果）
     uintptr_t FindPattern(const RemoteModuleInfo& moduleInfo, const BYTE* pattern, const char* mask);
     
     // 在远程进程中查找特征码（所有结果）
     std::vector<uintptr_t> FindAllPatterns(const RemoteModuleInfo& moduleInfo, const BYTE* pattern, const char* mask);
-    
-    // 读取远程内存
-    bool ReadRemoteMemory(uintptr_t address, void* buffer, SIZE_T size);
-    
+
     // 获取微信版本号
     std::string GetWeChatVersion();
     

@@ -1,13 +1,12 @@
 ﻿#include "../include/remote_scanner.h"
 #include "../include/syscalls.h"
 #include "../include/string_obfuscator.h"
-#include <Psapi.h>
 #include <array>
 #include <exception>
 #include <sstream>
 
-#pragma comment(lib, "Psapi.lib")
 #pragma comment(lib, "version.lib")
+const char* kSupportedRange = "4.0.x 及以上 4.x 版本";
 
 // 版本配置管理器静态成员
 std::vector<WeChatVersionConfig> VersionConfigManager::configs;
@@ -106,9 +105,7 @@ const WeChatVersionConfig* VersionConfigManager::GetConfigForVersion(const std::
 }
 
 // RemoteScanner实现
-RemoteScanner::RemoteScanner(HANDLE hProcess)
-    : hProcess(hProcess)
-{
+RemoteScanner::RemoteScanner() : hProcess(NULL) {
     // 预分配扫描缓冲区（2MB）
     scanBuffer.reserve(2 * 1024 * 1024);
 }
@@ -116,34 +113,52 @@ RemoteScanner::RemoteScanner(HANDLE hProcess)
 RemoteScanner::~RemoteScanner() {
 }
 
-bool RemoteScanner::GetRemoteModuleInfo(const std::string& moduleName, RemoteModuleInfo& outInfo) {
-    // 枚举远程进程的模块
-    HMODULE hMods[1024];
-    DWORD cbNeeded;
-    
-    if (!EnumProcessModules(this->hProcess, hMods, sizeof(hMods), &cbNeeded)) {
+bool RemoteScanner::SearchForHookAddress(HANDLE hProcess, ScanResult& result) {
+    if (hProcess == NULL) {
+        result.msg = "进程句柄为空";
+    }
+
+    this->hProcess = hProcess;
+
+    // 获取微信版本
+    std::string wechatVersion = GetWeChatVersion();
+    if (wechatVersion.empty()) {
+        result.msg = "获取微信版本失败，目标进程可能已退出";
         return false;
     }
-    
-    DWORD moduleCount = cbNeeded / sizeof(HMODULE);
-    
-    for (DWORD i = 0; i < moduleCount; i++) {
-        char szModName[MAX_PATH];
-        
-        if (GetModuleBaseNameA(this->hProcess, hMods[i], szModName, sizeof(szModName) / sizeof(char))) {
-            if (_stricmp(szModName, moduleName.c_str()) == 0) {
-                MODULEINFO modInfo;
-                if (GetModuleInformation(this->hProcess, hMods[i], &modInfo, sizeof(modInfo))) {
-                    outInfo.baseAddress = hMods[i];
-                    outInfo.imageSize = modInfo.SizeOfImage;
-                    outInfo.moduleName = szModName;
-                    return true;
-                }
-            }
-        }
+
+    //获取版本配置
+    const WeChatVersionConfig* config = VersionConfigManager::GetConfigForVersion(wechatVersion);
+    if (!config) {
+        std::string errorMsg = std::string(u8"不支持的微信版本: ") + wechatVersion + "，支持范围: " + kSupportedRange;
+        result.msg = errorMsg;
+        return false;
     }
-    
-    return false;
+
+    // 扫描函数
+    std::string weixinDll = ObfuscatedStrings::GetWeixinDllName();
+    RemoteModuleInfo moduleInfo;
+
+    if (!GetRemoteModuleInfo(this->hProcess, weixinDll, moduleInfo)) {
+        result.msg = "未找到Weixin.dll模块";
+        return false;
+    }
+
+    std::vector<uintptr_t> results = FindAllPatterns(
+        moduleInfo,
+        config->pattern.data(),
+        config->mask.c_str()
+    );
+
+    if (results.size() != 1) {
+        std::stringstream errorMsg;
+        errorMsg << u8"模式匹配失败，找到 " << results.size() << u8" 个结果";
+        result.msg = errorMsg.str();
+        return false;
+    }
+
+    result.target = results[0] + config->offset;
+    return true;
 }
 
 bool RemoteScanner::MatchPattern(const BYTE* data, const BYTE* pattern, const char* mask, size_t length) {
@@ -203,24 +218,11 @@ std::vector<uintptr_t> RemoteScanner::FindAllPatterns(const RemoteModuleInfo& mo
     return results;
 }
 
-bool RemoteScanner::ReadRemoteMemory(uintptr_t address, void* buffer, SIZE_T size) {
-    SIZE_T bytesRead = 0;
-    NTSTATUS status = IndirectSyscalls::NtReadVirtualMemory(
-        this->hProcess,
-        (PVOID)address,
-        buffer,
-        size,
-        &bytesRead
-    );
-    
-    return (status == STATUS_SUCCESS && bytesRead == size);
-}
-
 std::string RemoteScanner::GetWeChatVersion() {
     std::string weixinDllName = ObfuscatedStrings::GetWeixinDllName();
     
     RemoteModuleInfo moduleInfo;
-    if (!GetRemoteModuleInfo(weixinDllName, moduleInfo)) {
+    if (!GetRemoteModuleInfo(this->hProcess, weixinDllName, moduleInfo)) {
         return "";
     }
     

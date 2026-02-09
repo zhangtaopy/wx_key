@@ -4,92 +4,177 @@
 #include <algorithm>
 #include <cstdio>
 
+// 这个原来的太简单会有问题(sub esp,xx等),AI生成一份改一改凑合着用吧，最好换成成熟的反汇编指令长度计算库
 // 简单的x64反汇编长度检测器
 // 支持常见指令，用于计算需要备份多少字节
 namespace X64Disasm {
-    // 检查是否为REX前缀 (0x40-0x4F)
-    inline bool IsRexPrefix(BYTE b) {
+    inline bool is_prefix(uint8_t b) {
+        return (b == 0xF0 || b == 0xF2 || b == 0xF3 ||  // LOCK/REP
+            b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 || // segment
+            b == 0x64 || b == 0x65 || b == 0x66 || b == 0x67);  // FS/GS/operand/addr
+    }
+
+    inline bool is_rex(uint8_t b) {
         return (b >= 0x40 && b <= 0x4F);
     }
     
     // 获取单条指令的长度
-    size_t GetInstructionLength(const BYTE* code) {
-        size_t len = 0;
-        bool hasRex = false;
-        
-        // 跳过REX前缀
-        if (IsRexPrefix(code[len])) {
-            hasRex = true;
-            len++;
+    size_t GetInstructionLength(const BYTE* code, size_t max_len = 15) {
+        const uint8_t* start = code;
+        uint8_t rex = 0;
+
+        // 处理前缀
+        while (code - start < max_len) {
+            if (is_rex(*code)) {
+                rex = *code;
+                code++;
+                continue;
+            }
+            if (is_prefix(*code)) {
+                code++;
+                continue;
+            }
+            break;
         }
-        
-        BYTE opcode = code[len];
-        len++;
-        
-        // 常见指令长度判断（简化版）
+
+        if (code - start >= max_len) return 1; // 安全返回
+
+        uint8_t opcode = *code++;
+        uint8_t modrm = 0;  // 移到这里定义
+
+        // 处理两字节操作码
+        if (opcode == 0x0F) {
+            if (code - start >= max_len) return 2;
+            opcode = *code++;
+
+            // 条件跳转
+            if (opcode >= 0x80 && opcode <= 0x8F) {
+                if (code + 4 - start > max_len) return 2;
+                return code + 4 - start;
+            }
+
+            // SIMD等指令
+            switch (opcode) {
+            case 0x10: case 0x11: case 0x12: case 0x13:
+            case 0x14: case 0x15: case 0x16: case 0x17:
+            case 0x28: case 0x29: case 0x2A: case 0x2B:
+            case 0x2C: case 0x2D: case 0x2E: case 0x2F:
+                // 需要ModR/M
+                if (code - start >= max_len) return 2;
+                code++;
+                return code - start;
+            }
+
+            return 2; // 其他两字节指令
+        }
+
+        // 主操作码处理
         switch (opcode) {
-            // 单字节指令
-            case 0x50: case 0x51: case 0x52: case 0x53:
-            case 0x54: case 0x55: case 0x56: case 0x57:
-            case 0x58: case 0x59: case 0x5A: case 0x5B:
-            case 0x5C: case 0x5D: case 0x5E: case 0x5F:
-            case 0x90: case 0xC3: case 0xCC:
-                return len;
-                
-            // MOV指令
-            case 0x88: case 0x89: case 0x8A: case 0x8B:
-                len++; // ModRM
-                if ((code[len-1] & 0xC0) != 0xC0) {
-                    // 有内存操作数
-                    BYTE modrm = code[len-1];
-                    BYTE mod = (modrm >> 6) & 3;
-                    BYTE rm = modrm & 7;
-                    
-                    if (rm == 4) len++; // 有SIB字节
-                    if (mod == 1) len++; // disp8
-                    else if (mod == 2) len += 4; // disp32
-                }
-                return len;
-                
-            // 立即数指令
-            case 0xB0: case 0xB1: case 0xB2: case 0xB3:
-            case 0xB4: case 0xB5: case 0xB6: case 0xB7:
-                return len + 1; // imm8
-                
-            case 0xB8: case 0xB9: case 0xBA: case 0xBB:
-            case 0xBC: case 0xBD: case 0xBE: case 0xBF:
-                return len + (hasRex ? 8 : 4); // imm32/64
-                
+            // 1字节指令
+        case 0x90: case 0x91: case 0x92: case 0x93:
+        case 0x94: case 0x95: case 0x96: case 0x97:
+        case 0x98: case 0x99: case 0x9B: case 0x9C:
+        case 0x9D: case 0x9E: case 0x9F:
+        case 0xC3: case 0xCB: case 0xCC:
+        case 0xF4: case 0xF5: case 0xF8: case 0xF9:
+        case 0xFA: case 0xFB: case 0xFC: case 0xFD:
+            return code - start;
+
+            // push/pop寄存器
+        case 0x50: case 0x51: case 0x52: case 0x53:
+        case 0x54: case 0x55: case 0x56: case 0x57:
+        case 0x58: case 0x59: case 0x5A: case 0x5B:
+        case 0x5C: case 0x5D: case 0x5E: case 0x5F:
+            return code - start;
+
+            // 立即数到寄存器
+        case 0xB0: case 0xB1: case 0xB2: case 0xB3:
+        case 0xB4: case 0xB5: case 0xB6: case 0xB7:
+            if (code + 1 - start > max_len) return 1;
+            return code + 1 - start;
+
+        case 0xB8: case 0xB9: case 0xBA: case 0xBB:
+        case 0xBC: case 0xBD: case 0xBE: case 0xBF:
+            if (rex & 0x8) { // REX.W
+                if (code + 8 - start > max_len) return 1;
+                return code + 8 - start;
+            }
+            else {
+                if (code + 4 - start > max_len) return 1;
+                return code + 4 - start;
+            }
+
             // 短跳转
-            case 0x70: case 0x71: case 0x72: case 0x73:
-            case 0x74: case 0x75: case 0x76: case 0x77:
-            case 0x78: case 0x79: case 0x7A: case 0x7B:
-            case 0x7C: case 0x7D: case 0x7E: case 0x7F:
-            case 0xEB:
-                return len + 1; // rel8
-                
-            case 0xE8: case 0xE9: // CALL/JMP rel32
-                return len + 4;
-                
-            // 双字节指令
-            case 0x0F:
-                len++;
-                opcode = code[len-1];
-                if (opcode >= 0x80 && opcode <= 0x8F) {
-                    return len + 4; // 条件跳转 rel32
+        case 0x70: case 0x71: case 0x72: case 0x73:
+        case 0x74: case 0x75: case 0x76: case 0x77:
+        case 0x78: case 0x79: case 0x7A: case 0x7B:
+        case 0x7C: case 0x7D: case 0x7E: case 0x7F:
+        case 0xEB: case 0xE3:
+            if (code + 1 - start > max_len) return 1;
+            return code + 1 - start;
+
+            // CALL/JMP相对
+        case 0xE8: case 0xE9:
+            if (code + 4 - start > max_len) return 1;
+            return code + 4 - start;
+
+            // 操作码组
+        case 0x80: case 0x81: case 0x82: case 0x83:
+        case 0x88: case 0x89: case 0x8A: case 0x8B:
+        case 0x8C: case 0x8D: case 0x8E: case 0x8F:
+        case 0xC0: case 0xC1: case 0xC6: case 0xC7:
+        case 0xD0: case 0xD1: case 0xD2: case 0xD3:
+        case 0xF6: case 0xF7: case 0xFE: case 0xFF:
+            if (code - start >= max_len) return 1;
+            modrm = *code++;  // 这里只是赋值，不是定义
+
+            {
+                uint8_t mod = (modrm >> 6) & 3;
+                uint8_t rm = modrm & 7;
+
+                // 处理SIB
+                if (mod != 3 && rm == 4) {
+                    if (code - start >= max_len) return code - start;
+                    code++; // SIB
                 }
-                return len + 1; // 简化处理
-                
-            // LEA
-            case 0x8D:
-                len++; // ModRM
-                if ((code[len-1] & 0x07) == 4) len++; // SIB
-                if (((code[len-1] >> 6) & 3) == 2) len += 4; // disp32
-                return len;
-                
-            default:
-                // 未知指令，返回最小长度
-                return len + 1;
+
+                // 处理disp
+                if (mod == 1) {
+                    if (code + 1 - start > max_len) return code - start;
+                    code += 1;
+                }
+                else if (mod == 2 || (mod == 0 && rm == 5)) {
+                    if (code + 4 - start > max_len) return code - start;
+                    code += 4;
+                }
+
+                // 处理立即数
+                switch (opcode) {
+                case 0x80: case 0x82: case 0x83:
+                case 0xC0: case 0xC1: case 0xC6:
+                case 0xD0: case 0xD1: case 0xD2: case 0xD3:
+                    if (code + 1 - start > max_len) return code - start;
+                    code += 1;
+                    break;
+
+                case 0x81: case 0xC7:
+                    if (rex & 0x8) {
+                        if (code + 8 - start > max_len) return code - start;
+                        code += 8;
+                    }
+                    else {
+                        if (code + 4 - start > max_len) return code - start;
+                        code += 4;
+                    }
+                    break;
+                }
+            }
+
+            return code - start;
+
+        default:
+            // 其他指令返回1字节
+            return 1;
         }
     }
 }

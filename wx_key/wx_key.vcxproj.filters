@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="scanner">
+      <UniqueIdentifier>{aa7f8885-4585-43ce-9ec2-438e0a206251}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -30,9 +33,6 @@
     <ClInclude Include="include\ipc_manager.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="include\remote_scanner.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="include\remote_hooker.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -47,6 +47,15 @@
     </ClInclude>
     <ClInclude Include="include\remote_veh.h">
       <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="include\remote_scanner.h">
+      <Filter>scanner</Filter>
+    </ClInclude>
+    <ClInclude Include="include\remote_scanner_base.h">
+      <Filter>scanner</Filter>
+    </ClInclude>
+    <ClInclude Include="include\remote_scanner_common.h">
+      <Filter>scanner</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -65,9 +74,6 @@
     <ClCompile Include="src\ipc_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="src\remote_scanner.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="src\remote_hooker.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -79,6 +85,12 @@
     </ClCompile>
     <ClCompile Include="src\remote_veh.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\remote_scanner.cpp">
+      <Filter>scanner</Filter>
+    </ClCompile>
+    <ClCompile Include="src\remote_scanner_common.cpp">
+      <Filter>scanner</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
