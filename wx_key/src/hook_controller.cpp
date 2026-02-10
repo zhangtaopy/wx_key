@@ -265,6 +265,7 @@ namespace {
             result.reset();
             if (!scanner.SearchForHookAddress(g_ctx.hProcess, result)) {
                 SetLastError(result.msg);
+                CleanupContext();
                 return false;
             }
         } 
