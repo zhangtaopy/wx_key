@@ -16,6 +16,9 @@
     <Filter Include="scanner">
       <UniqueIdentifier>{aa7f8885-4585-43ce-9ec2-438e0a206251}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ldasm">
+      <UniqueIdentifier>{025e9c4f-c5e5-4cbd-b3f3-30b40e8c2d3b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -57,6 +60,9 @@
     <ClInclude Include="include\remote_scanner_common.h">
       <Filter>scanner</Filter>
     </ClInclude>
+    <ClInclude Include="vendor\ldasm\LDasm.h">
+      <Filter>ldasm</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -91,6 +97,9 @@
     </ClCompile>
     <ClCompile Include="src\remote_scanner_common.cpp">
       <Filter>scanner</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\ldasm\LDasm.c">
+      <Filter>ldasm</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
